@@ -1,0 +1,136 @@
+# Random Forest Pipeline for Mycotoxin Prediction Based on Diet
+
+# ===============================
+# 1. Load Libraries
+# ===============================
+library(randomForest)
+library(caret)
+library(pROC)
+library(dplyr)
+library(openxlsx)
+library(ggplot2)
+library(patchwork)
+library(tidyr)
+
+# ===============================
+# 2. Set Target Mycotoxin
+# ===============================
+mycotoxin_name <- "ennb1_ug_l"
+HM <- x_data_clean[[mycotoxin_name]]
+HM_present <- ifelse(HM > 0, 1, 0)
+
+# ===============================
+# 3. Prepare Predictors
+# ===============================
+predictors <- as.data.frame(X)
+predictors$HM_present <- as.factor(HM_present)
+
+# ===============================
+# 4. Train-Test Split
+# ===============================
+set.seed(123)
+train_index <- createDataPartition(predictors$HM_present, p = 0.8, list = FALSE)
+train_data <- predictors[train_index, ]
+test_data <- predictors[-train_index, ]
+
+# ===============================
+# 5. Train Random Forest Model
+# ===============================
+rf_model <- randomForest(HM_present ~ ., data = train_data, ntree = 500, importance = TRUE)
+
+# ===============================
+# 6. Test Set Predictions and Evaluation
+# ===============================
+test_probs <- predict(rf_model, newdata = test_data, type = "prob")[, 2]
+test_pred <- ifelse(test_probs > 0.5, 1, 0)
+test_conf <- confusionMatrix(factor(test_pred), factor(test_data$HM_present), positive = "1")
+test_roc <- roc(as.numeric(as.character(test_data$HM_present)), test_probs)
+test_auc <- auc(test_roc)
+
+# ===============================
+# 7. Optimize Threshold
+# ===============================
+best_thresh <- mean(coords(test_roc, "best", ret = "threshold")$threshold)
+
+# Apply optimal threshold to test predictions
+test_pred_opt <- ifelse(test_probs > best_thresh, 1, 0)
+conf_opt <- confusionMatrix(factor(test_pred_opt), factor(test_data$HM_present), positive = "1")
+
+# ===============================
+# 8. Train Set Evaluation
+# ===============================
+train_probs <- predict(rf_model, newdata = train_data, type = "prob")[, 2]
+train_pred <- ifelse(train_probs > 0.5, 1, 0)
+train_conf <- confusionMatrix(factor(train_pred), factor(train_data$HM_present), positive = "1")
+train_roc <- roc(as.numeric(as.character(train_data$HM_present)), train_probs)
+train_auc <- auc(train_roc)
+
+# ===============================
+# 9. Export Metrics
+# ===============================
+summary_df <- data.frame(
+  Dataset = c("Train", "Test", "Test (Optimized)"),
+  Threshold = c(0.5, 0.5, best_thresh),
+  Accuracy = c(train_conf$overall["Accuracy"], test_conf$overall["Accuracy"], conf_opt$overall["Accuracy"]),
+  Sensitivity = c(train_conf$byClass["Sensitivity"], test_conf$byClass["Sensitivity"], conf_opt$byClass["Sensitivity"]),
+  Specificity = c(train_conf$byClass["Specificity"], test_conf$byClass["Specificity"], conf_opt$byClass["Specificity"]),
+  BalancedAccuracy = c(train_conf$byClass["Balanced Accuracy"], test_conf$byClass["Balanced Accuracy"], conf_opt$byClass["Balanced Accuracy"]),
+  AUC = c(train_auc, test_auc, test_auc)
+)
+write.xlsx(summary_df, paste0("Model_Performance_", mycotoxin_name, ".xlsx"))
+
+# ===============================
+# 10. Compare Train vs Test (Default & Optimized)
+# ===============================
+compare_df <- data.frame(
+  Dataset = c("Train (RF)", "Test (RF, default)", "Test (RF, optimized)"),
+  Threshold = c(0.5, 0.5, best_thresh),
+  Accuracy = round(c(train_conf$overall["Accuracy"], test_conf$overall["Accuracy"], conf_opt$overall["Accuracy"]), 3),
+  Sensitivity = round(c(train_conf$byClass["Sensitivity"], test_conf$byClass["Sensitivity"], conf_opt$byClass["Sensitivity"]), 3),
+  Specificity = round(c(train_conf$byClass["Specificity"], test_conf$byClass["Specificity"], conf_opt$byClass["Specificity"]), 3),
+  BalancedAccuracy = round(c(train_conf$byClass["Balanced Accuracy"], test_conf$byClass["Balanced Accuracy"], conf_opt$byClass["Balanced Accuracy"]), 3),
+  AUC = round(c(train_auc, test_auc, test_auc), 3)
+)
+
+print(compare_df)
+write.xlsx(compare_df, file = paste0("Model_Performance_Comparison_", mycotoxin_name, ".xlsx"))
+
+# ===============================
+# 11. Variable Importance Plots
+# ===============================
+imp <- importance(rf_model)
+imp_df <- data.frame(Food = rownames(imp),
+                     MeanDecreaseAccuracy = imp[, "MeanDecreaseAccuracy"],
+                     MeanDecreaseGini = imp[, "MeanDecreaseGini"])
+
+top_acc <- imp_df %>% arrange(desc(MeanDecreaseAccuracy)) %>% slice(1:15)
+top_gini <- imp_df %>% arrange(desc(MeanDecreaseGini)) %>% slice(1:15)
+
+p_acc <- ggplot(top_acc, aes(x = reorder(Food, MeanDecreaseAccuracy), y = MeanDecreaseAccuracy)) +
+  geom_col(fill = "darkorange") +
+  coord_flip() +
+  labs(title = "Top Food Predictors", subtitle = "Mean Decrease Accuracy") +
+  theme_minimal(base_size = 14)
+
+p_gini <- ggplot(top_gini, aes(x = reorder(Food, MeanDecreaseGini), y = MeanDecreaseGini)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = NULL, subtitle = "Mean Decrease Gini") +
+  theme_minimal(base_size = 14)
+
+# ===============================
+# 12. ROC Curve Plot
+# ===============================
+roc_df <- data.frame(FPR = 1 - test_roc$specificities, TPR = test_roc$sensitivities)
+p_roc <- ggplot(roc_df, aes(x = FPR, y = TPR)) +
+  geom_line(color = "darkgreen", size = 1.2) +
+  geom_abline(linetype = "dashed", color = "gray") +
+  labs(title = "ROC Curve (Test Set)", subtitle = paste("AUC =", round(test_auc, 3))) +
+  theme_minimal(base_size = 14)
+
+# ===============================
+# 13. Combine and Save Final Figure
+# ===============================
+final_figure <- (p_acc | p_gini) / p_roc
+ggsave(paste0("RandomForest_Results_Composite_", mycotoxin_name, ".png"), 
+       plot = final_figure, width = 14, height = 10, dpi = 300)
