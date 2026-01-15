@@ -24,8 +24,8 @@ The pipeline:
 Example target:
 ```r
 mycotoxin_name <- "ennb1_ug_l"
-
 ---
+```r
 ##  Estimation of dietary mycotoxin exposure
 MAMI_FFQ_to_FoodEx.xlsx:
 Contains the mapping of FFQ food items to FoodEx classification levels (L1–L3).
