@@ -25,7 +25,8 @@ Example target:
 ```r
 mycotoxin_name <- "ennb1_ug_l"
 
-##  **Estimation of dietary mycotoxin exposure**
+---
+##  Estimation of dietary mycotoxin exposure
 MAMI_FFQ_to_FoodEx.xlsx:
 Contains the mapping of FFQ food items to FoodEx classification levels (L1–L3).
 
@@ -35,3 +36,4 @@ calculated per FoodEx level and food group.
 
 Overall_population_mycotoxin_exposure.xlsx:
 Population-level summaries of total daily mycotoxin intake by FoodEx level.
+---
